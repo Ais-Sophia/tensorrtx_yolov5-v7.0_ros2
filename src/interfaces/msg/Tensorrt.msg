@@ -1,6 +1,8 @@
 std_msgs/Header header              #时间戳
 float32 center_depth                #中心深度
 
+float32[3] point            #相机坐标系
+
 float32 x                   #x
 float32 y                   #y
 float32 width               #宽

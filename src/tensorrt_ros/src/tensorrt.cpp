@@ -60,6 +60,7 @@ public:
     // 创建发布者
     create_publishers();
 
+    init_real_sense_camera();
     initialize_trt(&runtime, &engine, &context, yolo_engine_path_, gpu_buffers, &cpu_output_buffer);
     // 启动深度相机线程
     depth_thread_ = std::thread(&CameraNode::run_camera, this);
@@ -87,12 +88,41 @@ public:
   }
   
 private:
+  // 初始化RealSense相机
+  void init_real_sense_camera() 
+  {
+    RCLCPP_INFO(this->get_logger(), "初始化RealSense相机...");
+    // 检查RealSense设备是否可用
+    rs2::context ctx;
+    auto devices = ctx.query_devices();
+    RCLCPP_INFO(this->get_logger(), "检测到 %zu 个RealSense设备", devices.size());
+        
+    // 创建RealSense管道和配置
+
+    cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
+    cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
+    
+    // 启动管道
+    profile = p.start(cfg);
+    
+    // 获取相机内参（用于3D坐标计算）
+    auto color_stream = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
+    rs2_intrinsics color_intrin = color_stream.get_intrinsics();
+    RCLCPP_INFO(this->get_logger(), "彩色相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
+                color_intrin.fx, color_intrin.fy, color_intrin.ppx, color_intrin.ppy);
+
+    auto depth_stream = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
+    rs2_intrinsics depth_intrin = depth_stream.get_intrinsics();
+    RCLCPP_INFO(this->get_logger(), "深度相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
+                depth_intrin.fx, depth_intrin.fy, depth_intrin.ppx, depth_intrin.ppy);
+    
+
+  }
   // 初始化TensorRT
   void initialize_trt( IRuntime** runtime, ICudaEngine** engine,
                       IExecutionContext** context, const std::string& engine_path, 
                       float* gpu_buffers[2], float** cpu_output_buffer)
   {
-
     cudaSetDevice(kGpuId);
     // 反序列化模式（推理）------------------------------
     // 加载TensorRT引擎
@@ -129,12 +159,8 @@ private:
   std::vector<Detection> detect(const cv::Mat& image) 
   {
 
-
     std::vector<cv::Mat> img_batch = {image};
       // 设置使用的GPU设备
-
-
-
       // CUDA批量预处理（GPU上进行图像缩放、归一化等）
     cuda_batch_preprocess(img_batch, gpu_buffers[0], kInputW, kInputH, stream);
 
@@ -163,50 +189,41 @@ private:
   void run_camera() 
   {
     RCLCPP_INFO(this->get_logger(), "启动深度相机...");
-    
-    // 创建RealSense管道和配置
-    rs2::pipeline p;
-    rs2::config cfg;
-    cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
-    cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
-    
-    // 启动管道
-    rs2::pipeline_profile profile = p.start(cfg);
-    
-    // 获取相机内参（用于3D坐标计算）
-    auto color_stream = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
-    rs2_intrinsics color_intrin = color_stream.get_intrinsics();
-    RCLCPP_INFO(this->get_logger(), "彩色相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
-                color_intrin.fx, color_intrin.fy, color_intrin.ppx, color_intrin.ppy);
-    
+
     // 主循环
     while (rclcpp::ok())
     {
         rs2::frameset frames = p.wait_for_frames();
-        
-        // 获取深度帧
-        rs2::depth_frame depth_frame = frames.get_depth_frame();
+        rs2::align align_to_color(RS2_STREAM_COLOR);  // 关键：定义对齐到彩色流
+
+        // 执行像素对齐（深度图→彩色图）
+        auto aligned_frames = align_to_color.process(frames);
+
+        // 从对齐后的帧集合中获取配准后的深度帧和彩色帧
+        rs2::depth_frame depth_frame = aligned_frames.get_depth_frame();
+        rs2::video_frame color_frame = aligned_frames.get_color_frame();
+
         float dist_to_center = depth_frame.get_distance(depth_frame.get_width() / 2, 
                                                       depth_frame.get_height() / 2);
         RCLCPP_INFO(this->get_logger(), "中心深度: %.2f米", dist_to_center);
         
-        // 获取彩色帧并转换为OpenCV格式
-        rs2::video_frame color_frame = frames.get_color_frame();
+        // 转换为OpenCV格式
         cv::Mat color_image(cv::Size(640, 480), CV_8UC3, 
                            (void*)color_frame.get_data(), cv::Mat::AUTO_STEP);
         // cv::cvtColor(color_image, color_image, cv::COLOR_BGR2RGB);
         // 执行目标检测
+        float x,y;
         std::vector<Detection> detections;
         try {
+            
             detections = detect(color_image);
             RCLCPP_INFO(this->get_logger(), "检测到 %zu 个目标", detections.size());
-            
             // // 计算3D坐标
-            // for (const auto& det : detections) {
             //     // 边界框中心
-            //     float center_x = det.bbox[0] + det.bbox[2] / 2;
-            //     float center_y = det.bbox[1] + det.bbox[3] / 2;
-                
+            
+            x = detections[0].bbox[0] + detections[0].bbox[2] / 2;
+            y = detections[0].bbox[1] + detections[0].bbox[3] / 2;
+            
             //     // 获取深度值
             //     float depth = depth_frame.get_distance(center_x, center_y);
                 
@@ -218,10 +235,18 @@ private:
             //     RCLCPP_INFO(this->get_logger(), 
             //                 "目标 %d @ (%.2f, %.2f, %.2f) | 置信度: %.2f", 
             //                 det.class_id, point[0], point[1], point[2], det.conf);
-            // }
         } catch (const std::exception& e) {
             RCLCPP_ERROR(this->get_logger(), "目标检测失败: %s", e.what());
         }
+        
+
+        // 获取深度值和像素坐标
+        float depth_value = depth_frame.get_distance(x, y);
+        float pixel[2] = { (float)x, (float)y };
+        
+        // 将像素坐标投影到3D坐标
+        float point[3];
+        rs2_deproject_pixel_to_point(point, &depth_intrin, pixel, depth_value);
 
         // 显示检测结果
         // if (enable_imshow_ && !detections.empty()) {
@@ -231,42 +256,18 @@ private:
         // }
         
         // 发布自定义消息
-        publish_msg_data(detections, dist_to_center);
+        publish_msg_data(detections, dist_to_center, point);
     }
     
     RCLCPP_INFO(this->get_logger(), "深度相机线程退出");
   }
 
-  // 绘制检测结果
-  cv::Mat draw_detections(const cv::Mat& image, const std::vector<Detection>& detections) {
-      cv::Mat output_image = image.clone();
-      
-      for (const auto& detection : detections) {
-          // 提取边界框信息
-          float x = detection.bbox[0];
-          float y = detection.bbox[1];
-          float w = detection.bbox[2];
-          float h = detection.bbox[3];
-          
-          cv::Rect bbox(x, y, w, h);
-          
-          // 绘制边界框
-          cv::rectangle(output_image, bbox, cv::Scalar(0, 255, 0), 2);
-          
-          // 创建文本标签
-          std::string label = "ID:" + std::to_string(detection.class_id) + 
-                            " Conf:" + std::to_string(detection.conf).substr(0, 4);
-          cv::putText(output_image, label, cv::Point(bbox.x, bbox.y - 5),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
-      }
-      
-      return output_image;
-  }
-  
+
   // 发布自定义消息
   void publish_msg_data(
                       const std::vector<Detection>& detections,
-                      float center_depth) 
+                      float center_depth,
+                      float* point) 
   {
     auto msg = interfaces::msg::Tensorrt();
     msg.header.stamp = this->now();
@@ -281,7 +282,10 @@ private:
         msg.class_id=det.class_id;
         msg.confidence=det.conf;
     }
-    
+    msg.point[0] = point[0];
+    msg.point[1] = point[1];
+    msg.point[2] = point[2];
+    // 发布消息
     msg_data_publisher_->publish(msg);
   }
 
@@ -289,16 +293,21 @@ private:
   rclcpp::Publisher<interfaces::msg::Tensorrt>::SharedPtr msg_data_publisher_;
   std::thread depth_thread_;
   
+  rs2::pipeline p;
+  rs2::config cfg;
+  rs2::pipeline_profile profile;
+  rs2_intrinsics color_intrin;
+  rs2_intrinsics depth_intrin;
   // 参数
   bool enable_imshow_;
   std::string yolo_engine_path_;
 };
 
-int main(int argc, char * argv[])
-{
-  rclcpp::init(argc, argv);
-  auto node = std::make_shared<CameraNode>();
-  rclcpp::spin(node);
-  rclcpp::shutdown();
-  return 0;
-}
+// int main(int argc, char * argv[])
+// {
+//   rclcpp::init(argc, argv);
+//   auto node = std::make_shared<CameraNode>();
+//   rclcpp::spin(node);
+//   rclcpp::shutdown();
+//   return 0;
+// }
