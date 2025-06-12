@@ -96,27 +96,27 @@ void cuda_preprocess(
     const uint8_t* src, int src_width, int src_height,
     float* dst, int dst_width, int dst_height,
     cudaStream_t stream) {
-          std::cout << "原始图像尺寸: " << src_width << "x" << src_height << std::endl;
-    std::cout << "目标尺寸: " << dst_width << "x" << dst_height << std::endl;
+    //       std::cout << "原始图像尺寸: " << src_width << "x" << src_height << std::endl;
+    // std::cout << "目标尺寸: " << dst_width << "x" << dst_height << std::endl;
 
         // 检查前10个像素值
     const uint8_t* data = src;  // 假设src是输入图像指针
-    std::cout << "前10个像素值: ";
-    for (int i = 0; i < 10; i++) {
-        std::cout << static_cast<int>(data[i]) << " ";
-    }
-    std::cout << std::endl;
+    // std::cout << "前10个像素值: ";
+    // for (int i = 0; i < 10; i++) {
+    //     std::cout << static_cast<int>(data[i]) << " ";
+    // }
+    // std::cout << std::endl;
   int img_size = src_width * src_height * 3;
   // copy data to pinned memory中文
-  std::cout << "复制数据到主机内存，大小：" << img_size << " 字节" << std::endl;
+  // std::cout << "复制数据到主机内存，大小：" << img_size << " 字节" << std::endl;
   memcpy(img_buffer_host, src, img_size);
   // copy data to device memory
-  std::cout << "复制数据到设备内存，大小：" << img_size << " 字节" << std::endl;
+  // std::cout << "复制数据到设备内存，大小：" << img_size << " 字节" << std::endl;
   CUDA_CHECK(cudaMemcpyAsync(img_buffer_device, img_buffer_host, img_size, cudaMemcpyHostToDevice, stream));
   
   AffineMatrix s2d, d2s;
   float scale = std::min(dst_height / (float)src_height, dst_width / (float)src_width);
-  std::cout << "计算缩放比例：" << scale << std::endl;
+  // std::cout << "计算缩放比例：" << scale << std::endl;
   s2d.value[0] = scale;
   s2d.value[1] = 0;
   s2d.value[2] = -scale * src_width  * 0.5  + dst_width * 0.5;
@@ -127,13 +127,13 @@ void cuda_preprocess(
   cv::Mat m2x3_s2d(2, 3, CV_32F, s2d.value);
   cv::Mat m2x3_d2s(2, 3, CV_32F, d2s.value);
   cv::invertAffineTransform(m2x3_s2d, m2x3_d2s);
-  std::cout << "计算逆变换矩阵" << std::endl;
+  // std::cout << "计算逆变换矩阵" << std::endl;
   memcpy(d2s.value, m2x3_d2s.ptr<float>(0), sizeof(d2s.value));
 
   int jobs = dst_height * dst_width;
   int threads = 256;
   int blocks = ceil(jobs / (float)threads);
-  std::cout << "计算线程块和线程数：" << blocks << " blocks, " << threads << " threads" << std::endl;
+  // std::cout << "计算线程块和线程数：" << blocks << " blocks, " << threads << " threads" << std::endl;
   warpaffine_kernel<<<blocks, threads, 0, stream>>>(
       img_buffer_device, src_width * 3, src_width,
       src_height, dst, dst_width,
