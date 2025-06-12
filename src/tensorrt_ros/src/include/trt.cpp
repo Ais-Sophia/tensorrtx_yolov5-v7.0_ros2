@@ -214,106 +214,106 @@ void deserialize_engine(std::string& engine_name, IRuntime** runtime, ICudaEngin
   delete[] serialized_engine;
 }
 
-int main(int argc, char** argv) {
-  // 设置使用的GPU设备
-  cudaSetDevice(kGpuId);
+// int main(int argc, char** argv) {
+//   // 设置使用的GPU设备
+//   cudaSetDevice(kGpuId);
 
-  // 参数变量初始化
-  std::string wts_name = "/home/epoch_2/volleyball/src/tensorrtx_ros2/src/tensorrt_ros/src/weight/yolov5n.wts";        // 权重文件路径
-  std::string engine_name = "/home/epoch_2/volleyball/src/tensorrtx_ros2/src/tensorrt_ros/src/weight/yolov5n.engine";     // 引擎文件路径
-  bool is_p6 = false;               // 是否P6模型
-  float gd = 0.0f, gw = 0.0f;       // 模型缩放因子
-  std::string img_dir;              // 图像目录路径
+//   // 参数变量初始化
+//   std::string wts_name = "/home/epoch_2/volleyball/src/tensorrtx_ros2/src/tensorrt_ros/src/weight/best.wts";        // 权重文件路径
+//   std::string engine_name = "/home/epoch_2/volleyball/src/tensorrtx_ros2/src/tensorrt_ros/src/weight/best.engine";     // 引擎文件路径
+//   bool is_p6 = false;               // 是否P6模型
+//   float gd = 0.33f, gw = 0.50f;       // 模型缩放因子
+//   std::string img_dir;              // 图像目录路径
 
-  // // 解析命令行参数
-  // if (!parse_args(argc, argv, wts_name, engine_name, is_p6, gd, gw, img_dir)) {
-  //   std::cerr << "参数不正确!" << std::endl;
-  //   std::cerr << "./yolov5_det -s [.wts] [.engine] [n/s/m/l/x/n6/s6/m6/l6/x6 或 c/c6 gd gw]  // 序列化模型到引擎文件" << std::endl;
-  //   std::cerr << "./yolov5_det -d [.engine] ../images  // 从引擎文件反序列化并推理" << std::endl;
-  //   return -1;  // 退出程序
-  // }
+//   // // 解析命令行参数
+//   // if (!parse_args(argc, argv, wts_name, engine_name, is_p6, gd, gw, img_dir)) {
+//   //   std::cerr << "参数不正确!" << std::endl;
+//   //   std::cerr << "./yolov5_det -s [.wts] [.engine] [n/s/m/l/x/n6/s6/m6/l6/x6 或 c/c6 gd gw]  // 序列化模型到引擎文件" << std::endl;
+//   //   std::cerr << "./yolov5_det -d [.engine] ../images  // 从引擎文件反序列化并推理" << std::endl;
+//   //   return -1;  // 退出程序
+//   // }
 
-  // 序列化模式（创建引擎文件）
-  if (!wts_name.empty()) {
-    serialize_engine(kBatchSize, is_p6, gd, gw, wts_name, engine_name);
-    return 0;
-  }
+//   // 序列化模式（创建引擎文件）
+//   if (!wts_name.empty()) {
+//     serialize_engine(kBatchSize, is_p6, gd, gw, wts_name, engine_name);
+//     return 0;
+//   }
 
-  // // 反序列化模式（推理）------------------------------
+//   // // 反序列化模式（推理）------------------------------
 
-  // // 加载TensorRT引擎
-  // IRuntime* runtime = nullptr;
-  // ICudaEngine* engine = nullptr;
-  // IExecutionContext* context = nullptr;
-  // deserialize_engine(engine_name, &runtime, &engine, &context);
+//   // // 加载TensorRT引擎
+//   // IRuntime* runtime = nullptr;
+//   // ICudaEngine* engine = nullptr;
+//   // IExecutionContext* context = nullptr;
+//   // deserialize_engine(engine_name, &runtime, &engine, &context);
   
-  // // 创建CUDA流
-  // cudaStream_t stream;
-  // CUDA_CHECK(cudaStreamCreate(&stream));
+//   // // 创建CUDA流
+//   // cudaStream_t stream;
+//   // CUDA_CHECK(cudaStreamCreate(&stream));
 
-  // // 初始化CUDA预处理（分配GPU内存）
-  // cuda_preprocess_init(kMaxInputImageSize);
+//   // // 初始化CUDA预处理（分配GPU内存）
+//   // cuda_preprocess_init(kMaxInputImageSize);
 
-  // // 准备CPU/GPU缓冲区
-  // float* gpu_buffers[2];  // GPU缓冲区数组（输入/输出）
-  // float* cpu_output_buffer = nullptr;  // CPU输出缓冲区
-  // prepare_buffers(engine, &gpu_buffers[0], &gpu_buffers[1], &cpu_output_buffer);
+//   // // 准备CPU/GPU缓冲区
+//   // float* gpu_buffers[2];  // GPU缓冲区数组（输入/输出）
+//   // float* cpu_output_buffer = nullptr;  // CPU输出缓冲区
+//   // prepare_buffers(engine, &gpu_buffers[0], &gpu_buffers[1], &cpu_output_buffer);
 
-  // // 读取目录中的图像文件名
-  // std::vector<std::string> file_names;
-  // if (read_files_in_dir(img_dir.c_str(), file_names) < 0) {
-  //   std::cerr << "读取目录中的文件失败" << std::endl;
-  //   return -1;
-  // }
+//   // // 读取目录中的图像文件名
+//   // std::vector<std::string> file_names;
+//   // if (read_files_in_dir(img_dir.c_str(), file_names) < 0) {
+//   //   std::cerr << "读取目录中的文件失败" << std::endl;
+//   //   return -1;
+//   // }
 
-  // // 批处理预测循环
-  // for (size_t i = 0; i < file_names.size(); i += kBatchSize) {
-  //   // 获取一批图像
-  //   std::vector<cv::Mat> img_batch;
-  //   std::vector<std::string> img_name_batch;
-  //   for (size_t j = i; j < i + kBatchSize && j < file_names.size(); j++) {
-  //     cv::Mat img = cv::imread(img_dir + "/" + file_names[j]);
-  //     img_batch.push_back(img);
-  //     img_name_batch.push_back(file_names[j]);
-  //   }
+//   // // 批处理预测循环
+//   // for (size_t i = 0; i < file_names.size(); i += kBatchSize) {
+//   //   // 获取一批图像
+//   //   std::vector<cv::Mat> img_batch;
+//   //   std::vector<std::string> img_name_batch;
+//   //   for (size_t j = i; j < i + kBatchSize && j < file_names.size(); j++) {
+//   //     cv::Mat img = cv::imread(img_dir + "/" + file_names[j]);
+//   //     img_batch.push_back(img);
+//   //     img_name_batch.push_back(file_names[j]);
+//   //   }
 
-  //   // CUDA批量预处理（GPU上进行图像缩放、归一化等）
-  //   cuda_batch_preprocess(img_batch, gpu_buffers[0], kInputW, kInputH, stream);
+//   //   // CUDA批量预处理（GPU上进行图像缩放、归一化等）
+//   //   cuda_batch_preprocess(img_batch, gpu_buffers[0], kInputW, kInputH, stream);
 
-  //   // 执行推理并计时
-  //   auto start = std::chrono::system_clock::now();
-  //   infer(*context, stream, (void**)gpu_buffers, cpu_output_buffer, kBatchSize);
-  //   auto end = std::chrono::system_clock::now();
-  //   std::cout << "推理时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "毫秒" << std::endl;
+//   //   // 执行推理并计时
+//   //   auto start = std::chrono::system_clock::now();
+//   //   infer(*context, stream, (void**)gpu_buffers, cpu_output_buffer, kBatchSize);
+//   //   auto end = std::chrono::system_clock::now();
+//   //   std::cout << "推理时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "毫秒" << std::endl;
 
-  //   // 批处理非极大值抑制（过滤重叠框）
-  //   std::vector<std::vector<Detection>> res_batch;
-  //   batch_nms(res_batch, cpu_output_buffer, img_batch.size(), kOutputSize, kConfThresh, kNmsThresh);
+//   //   // 批处理非极大值抑制（过滤重叠框）
+//   //   std::vector<std::vector<Detection>> res_batch;
+//   //   batch_nms(res_batch, cpu_output_buffer, img_batch.size(), kOutputSize, kConfThresh, kNmsThresh);
 
-  //   // 在图像上绘制检测框
-  //   draw_bbox(img_batch, res_batch);
+//   //   // 在图像上绘制检测框
+//   //   draw_bbox(img_batch, res_batch);
 
-  //   // 保存结果图像（在原文件名前加下划线）
-  //   for (size_t j = 0; j < img_batch.size(); j++) {
-  //     cv::imwrite("_" + img_name_batch[j], img_batch[j]);
-  //   }
-  // }
+//   //   // 保存结果图像（在原文件名前加下划线）
+//   //   for (size_t j = 0; j < img_batch.size(); j++) {
+//   //     cv::imwrite("_" + img_name_batch[j], img_batch[j]);
+//   //   }
+//   // }
 
-  // // ------------------ 资源清理 ------------------
-  // // 销毁CUDA流
-  // cudaStreamDestroy(stream);
-  // // 释放GPU输入/输出缓冲区
-  // CUDA_CHECK(cudaFree(gpu_buffers[0]));
-  // CUDA_CHECK(cudaFree(gpu_buffers[1]));
-  // // 释放CPU输出缓冲区
-  // delete[] cpu_output_buffer;
-  // // 清理CUDA预处理资源
-  // cuda_preprocess_destroy();
+//   // // ------------------ 资源清理 ------------------
+//   // // 销毁CUDA流
+//   // cudaStreamDestroy(stream);
+//   // // 释放GPU输入/输出缓冲区
+//   // CUDA_CHECK(cudaFree(gpu_buffers[0]));
+//   // CUDA_CHECK(cudaFree(gpu_buffers[1]));
+//   // // 释放CPU输出缓冲区
+//   // delete[] cpu_output_buffer;
+//   // // 清理CUDA预处理资源
+//   // cuda_preprocess_destroy();
   
-  // // 销毁TensorRT对象
-  // context->destroy();
-  // engine->destroy();
-  // runtime->destroy();
+//   // // 销毁TensorRT对象
+//   // context->destroy();
+//   // engine->destroy();
+//   // runtime->destroy();
 
-  return 0;  // 程序正常结束
-}
+//   return 0;  // 程序正常结束
+// }

@@ -7,7 +7,7 @@
 
 // For INT8, you need prepare the calibration dataset, please refer to
 // https://github.com/wang-xinyu/tensorrtx/tree/master/yolov5#int8-quantization
-#define USE_FP16  // set USE_INT8 or USE_FP16 or USE_FP32
+#define USE_FP32  // set USE_INT8 or USE_FP16 or USE_FP32
 
 // These are used to define input/output tensor names,
 // you can set them to whatever you want.
@@ -15,10 +15,10 @@ const static char* kInputTensorName = "data";
 const static char* kOutputTensorName = "prob";
 
 // Detection model and Segmentation model' number of classes
-constexpr static int kNumClass = 80;
+constexpr static int kNumClass = 1;
 
 // Classfication model's number of classes
-constexpr static int kClsNumClass = 1000;
+constexpr static int kClsNumClass = 1;
 
 constexpr static int kBatchSize = 1;
 

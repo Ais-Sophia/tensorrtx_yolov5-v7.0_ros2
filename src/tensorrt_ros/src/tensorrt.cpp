@@ -144,7 +144,7 @@ private:
     enable_imshow_ = this->get_parameter("imshow").as_bool();
     this->declare_parameter("yolo_engine_path", "weight/yolov5s.engine");
     yolo_engine_path_ = this->get_parameter("yolo_engine_path").as_string();
-    yolo_engine_path_ = "/home/epoch/Desktop/1/R1_vision_v2/src/tensorrt_ros/src/weight/yolov5s.engine";
+    yolo_engine_path_ = "/home/epoch_2/volleyball/src/tensorrtx_ros2/src/tensorrt_ros/src/weight/best_use.engine";
     if (yolo_engine_path_.empty()) {
         yolo_engine_path_ = "/home/epoch/Desktop/1/R1_vision_v2/src/tensorrt_ros/src/weight/yolov5s.engine";
     }
@@ -175,10 +175,10 @@ private:
     batch_nms(res_batch, cpu_output_buffer, img_batch.size(), kOutputSize, kConfThresh, kNmsThresh);
 
     // 在图像上绘制检测框
-    draw_bbox(img_batch, res_batch);
+    // draw_bbox(img_batch, res_batch);
     
-    cv::imshow("Detection Result", img_batch[0]);
-    cv::waitKey(1);
+    // cv::imshow("Detection Result", img_batch[0]);
+    // cv::waitKey(1);
 
     return res_batch[0];  // 返回第一个图像的检测结果
 
@@ -212,7 +212,7 @@ private:
                            (void*)color_frame.get_data(), cv::Mat::AUTO_STEP);
         // cv::cvtColor(color_image, color_image, cv::COLOR_BGR2RGB);
         // 执行目标检测
-        float x,y;
+        float x=0.0,y=0.0;
         std::vector<Detection> detections;
         try {
             
@@ -221,9 +221,13 @@ private:
             // // 计算3D坐标
             //     // 边界框中心
             
-            x = detections[0].bbox[0] + detections[0].bbox[2] / 2;
-            y = detections[0].bbox[1] + detections[0].bbox[3] / 2;
-            
+           if (!detections.empty()) {
+              float x = detections[0].bbox[0] + detections[0].bbox[2] / 2;
+              float y = detections[0].bbox[1] + detections[0].bbox[3] / 2;
+              // ... [使用x,y]
+            } else {
+              RCLCPP_INFO(this->get_logger(), "无目标，跳过3D计算");
+            }
             //     // 获取深度值
             //     float depth = depth_frame.get_distance(center_x, center_y);
                 
@@ -242,10 +246,10 @@ private:
 
         // 获取深度值和像素坐标
         float depth_value = depth_frame.get_distance(x, y);
-        float pixel[2] = { (float)x, (float)y };
+        float pixel[2] = { x, y };
         
         // 将像素坐标投影到3D坐标
-        float point[3];
+        float point[3]={0};
         rs2_deproject_pixel_to_point(point, &depth_intrin, pixel, depth_value);
 
         // 显示检测结果
@@ -259,7 +263,7 @@ private:
         publish_msg_data(detections, dist_to_center, point);
     }
     
-    RCLCPP_INFO(this->get_logger(), "深度相机线程退出");
+    RCLCPP_INFO(this->get_logger(), " 深度相机线程退出");
   }
 
 
@@ -303,11 +307,11 @@ private:
   std::string yolo_engine_path_;
 };
 
-// int main(int argc, char * argv[])
-// {
-//   rclcpp::init(argc, argv);
-//   auto node = std::make_shared<CameraNode>();
-//   rclcpp::spin(node);
-//   rclcpp::shutdown();
-//   return 0;
-// }
+int main(int argc, char * argv[])
+{
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<CameraNode>();
+  rclcpp::spin(node);
+  rclcpp::shutdown();
+  return 0;
+}
