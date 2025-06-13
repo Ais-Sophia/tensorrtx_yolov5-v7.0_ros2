@@ -159,16 +159,16 @@ private:
   void run_camera() 
   {
     RCLCPP_INFO(this->get_logger(), "启动深度相机...");
-    rs2::pipeline p
+    rs2::pipeline p;
     rs2::config cfg;
     // 创建RealSense管道和配置
 
     cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
     cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
-    
+
     // 启动管道rs2::pipeline p
     rs2::pipeline_profile profile = p.start(cfg);
-
+    rs2::align align_to_color(RS2_STREAM_COLOR);  // 关键：定义对齐到彩色流
     // 获取相机内参（用于3D坐标计算）
     auto color_stream = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
     rs2_intrinsics color_intrin = color_stream.get_intrinsics();
@@ -185,7 +185,7 @@ private:
     while (rclcpp::ok())
     {
         rs2::frameset frames = p.wait_for_frames();
-        rs2::align align_to_color(RS2_STREAM_COLOR);  // 关键：定义对齐到彩色流
+
 
         // 执行像素对齐（深度图→彩色图）
         auto aligned_frames = align_to_color.process(frames);
@@ -206,7 +206,7 @@ private:
         float x=0.0,y=0.0;
         float depth_value = 0.0 ;
         float pixel[2] = {0.0, 0.0};
-        int step_x=0,step_y=0;
+        // int step_x=0,step_y=0;
         // 将像素坐标投影到3D坐标
         float point[3]={0.0, 0.0, 0.0};
         std::vector<Detection> detections;
@@ -295,8 +295,8 @@ private:
             //             static_cast<int>(std::round(y))
             //         );
             //     }
-              pixel[0] = static_cast<int>(std::round(x));
-              pixel[1] = static_cast<int>(std::round(y));
+              pixel[0] = x;
+              pixel[1] = y;
               rs2_deproject_pixel_to_point(point, &color_intrin, pixel, depth_value);
             } else {
               RCLCPP_INFO(this->get_logger(), "无目标，跳过3D计算");
