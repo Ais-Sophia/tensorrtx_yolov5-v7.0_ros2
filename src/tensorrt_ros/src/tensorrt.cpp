@@ -60,7 +60,6 @@ public:
     // 创建发布者
     create_publishers();
 
-    init_real_sense_camera();
     initialize_trt(&runtime, &engine, &context, yolo_engine_path_, gpu_buffers, &cpu_output_buffer);
     // 启动深度相机线程
     depth_thread_ = std::thread(&CameraNode::run_camera, this);
@@ -88,36 +87,7 @@ public:
   }
   
 private:
-  // 初始化RealSense相机
-  void init_real_sense_camera() 
-  {
-    RCLCPP_INFO(this->get_logger(), "初始化RealSense相机...");
-    // 检查RealSense设备是否可用
-    rs2::context ctx;
-    auto devices = ctx.query_devices();
-    RCLCPP_INFO(this->get_logger(), "检测到 %zu 个RealSense设备", devices.size());
-        
-    // 创建RealSense管道和配置
 
-    cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
-    cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
-    
-    // 启动管道
-    profile = p.start(cfg);
-    
-    // 获取相机内参（用于3D坐标计算）
-    auto color_stream = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
-    color_intrin = color_stream.get_intrinsics();
-    RCLCPP_INFO(this->get_logger(), "彩色相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
-                color_intrin.fx, color_intrin.fy, color_intrin.ppx, color_intrin.ppy);
-
-    auto depth_stream = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
-    depth_intrin = depth_stream.get_intrinsics();
-    RCLCPP_INFO(this->get_logger(), "深度相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
-                depth_intrin.fx, depth_intrin.fy, depth_intrin.ppx, depth_intrin.ppy);
-    
-
-  }
   // 初始化TensorRT
   void initialize_trt( IRuntime** runtime, ICudaEngine** engine,
                       IExecutionContext** context, const std::string& engine_path, 
@@ -144,7 +114,7 @@ private:
     enable_imshow_ = this->get_parameter("imshow").as_bool();
     this->declare_parameter("yolo_engine_path", "weight/yolov5s.engine");
     yolo_engine_path_ = this->get_parameter("yolo_engine_path").as_string();
-    yolo_engine_path_ = "/home/epoch_2/volleyball/src/tensorrtx_ros2/src/tensorrt_ros/src/weight/best_use.engine";
+    yolo_engine_path_ = "/home/epoch/1/volleyball/tensorrtx_ros2/src/tensorrt_ros/src/weight/best.engine";
     if (yolo_engine_path_.empty()) {
         yolo_engine_path_ = "/home/epoch/Desktop/1/R1_vision_v2/src/tensorrt_ros/src/weight/yolov5s.engine";
     }
@@ -189,12 +159,33 @@ private:
   void run_camera() 
   {
     RCLCPP_INFO(this->get_logger(), "启动深度相机...");
+    rs2::pipeline p;
+    rs2::config cfg;
+    // 创建RealSense管道和配置
+
+    cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
+    cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
+
+    // 启动管道rs2::pipeline p
+    rs2::pipeline_profile profile = p.start(cfg);
+    rs2::align align_to_color(RS2_STREAM_COLOR);  // 关键：定义对齐到彩色流
+    // 获取相机内参（用于3D坐标计算）
+    auto color_stream = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
+    rs2_intrinsics color_intrin = color_stream.get_intrinsics();
+    RCLCPP_INFO(this->get_logger(), "彩色相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
+                color_intrin.fx, color_intrin.fy, color_intrin.ppx, color_intrin.ppy);
+
+    auto depth_stream = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
+    rs2_intrinsics depth_intrin = depth_stream.get_intrinsics();
+    RCLCPP_INFO(this->get_logger(), "深度相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
+                depth_intrin.fx, depth_intrin.fy, depth_intrin.ppx, depth_intrin.ppy);
+    
 
     // 主循环
     while (rclcpp::ok())
     {
         rs2::frameset frames = p.wait_for_frames();
-        rs2::align align_to_color(RS2_STREAM_COLOR);  // 关键：定义对齐到彩色流
+
 
         // 执行像素对齐（深度图→彩色图）
         auto aligned_frames = align_to_color.process(frames);
@@ -215,7 +206,7 @@ private:
         float x=0.0,y=0.0;
         float depth_value = 0.0 ;
         float pixel[2] = {0.0, 0.0};
-        int step_x=0,step_y=0;
+        // int step_x=0,step_y=0;
         // 将像素坐标投影到3D坐标
         float point[3]={0.0, 0.0, 0.0};
         std::vector<Detection> detections;
@@ -230,79 +221,82 @@ private:
               x = (detections[0].bbox[0] + detections[0].bbox[2]) / 2;
               y = (detections[0].bbox[1] + detections[0].bbox[3]) / 2;
               // ... [使用x,y]
-
-              std::vector<float> distance_list;
-
-              // 参数配置
-              const int GRID_X = 5; // X方向采样点数
-              const int GRID_Y = 5; // Y方向采样点数
-
-              // 获取深度图尺寸（必须确保depth_frame支持这些方法）
-              const int depth_w = depth_frame.get_width();
-              const int depth_h = depth_frame.get_height();
-
-              // 预分配内存避免反复扩容
-              distance_list.reserve(GRID_X * GRID_Y);
-
-              // 计算采样步长（使用浮点避免整数截断）
-              float step_x = detections[0].bbox[2] / (GRID_X + 1.0f);
-              float step_y = detections[0].bbox[3] / (GRID_Y + 1.0f);
-
-              // 输出改进：显示实际采样位置
-              RCLCPP_INFO(this->get_logger(), "采样起始点: (%.1f, %.1f), 步长: (%.1f, %.1f)",
-                          detections[0].bbox[0] + step_x,
-                          detections[0].bbox[1] + step_y,
-                          step_x, step_y);
-
-              // 优化后的采样循环
-              for (int i = 0; i < GRID_X; ++i) {
-                  // 浮点计算坐标后四舍五入
-                  const int x = static_cast<int>(
-                      detections[0].bbox[0] + step_x * (i + 1) + 0.5f
-                  );
-                  
-                  // 跳过越界坐标
-                  if (x < 0 || x >= depth_w) continue;
-                  
-                  for (int j = 0; j < GRID_Y; ++j) {
-                      const int y = static_cast<int>(
-                          detections[0].bbox[1] + step_y * (j + 1) + 0.5f
-                      );
-                      
-                      if (y < 0 || y >= depth_h) continue;
-                      
-                      // 单次获取距离并检查有效性
-                      if (float dist = depth_frame.get_distance(x, y); dist > 0.0f) {
-                          distance_list.push_back(dist);
-                      }
-                  }
-              }
-
-              // 安全警告日志
-              if (distance_list.empty()) {
-                  RCLCPP_WARN(this->get_logger(), "警告: 边界框内未获取到有效深度值！");
-              }
-            if (!distance_list.empty()) {
-                std::sort(distance_list.begin(), distance_list.end());
-                size_t middle_index = distance_list.size() / 2;
-                
-                if (distance_list.size() % 2 == 0) {
-                    // 偶数个元素时取中间两个的平均
-                    depth_value = (distance_list[middle_index - 1] + distance_list[middle_index]) / 2.0f;
-                } else {
-                    // 奇数个元素时取中间值
-                    depth_value = distance_list[middle_index];
-                }  // 修复此处大括号缺失问题
-                } else {
-                    // 无有效样本时回退到中心点深度
-                    RCLCPP_WARN(this->get_logger(), "无有效深度样本，使用中心点");
-                    depth_value = depth_frame.get_distance(
+              depth_value = depth_frame.get_distance(
                         static_cast<int>(std::round(x)), 
                         static_cast<int>(std::round(y))
                     );
-                }
-              pixel[0] = static_cast<int>(std::round(x));
-              pixel[1] = static_cast<int>(std::round(y));
+            //   std::vector<float> distance_list;
+
+            //   // 参数配置
+            //   const int GRID_X = 5; // X方向采样点数
+            //   const int GRID_Y = 5; // Y方向采样点数
+
+            //   // 获取深度图尺寸（必须确保depth_frame支持这些方法）
+            //   const int depth_w = depth_frame.get_width();
+            //   const int depth_h = depth_frame.get_height();
+
+            //   // 预分配内存避免反复扩容
+            //   distance_list.reserve(GRID_X * GRID_Y);
+
+            //   // 计算采样步长（使用浮点避免整数截断）
+            //   float step_x = detections[0].bbox[2] / (GRID_X + 1.0f);
+            //   float step_y = detections[0].bbox[3] / (GRID_Y + 1.0f);
+
+            //   // 输出改进：显示实际采样位置
+            //   RCLCPP_INFO(this->get_logger(), "采样起始点: (%.1f, %.1f), 步长: (%.1f, %.1f)",
+            //               detections[0].bbox[0] + step_x,
+            //               detections[0].bbox[1] + step_y,
+            //               step_x, step_y);
+
+            //   // 优化后的采样循环
+            //   for (int i = 0; i < GRID_X; ++i) {
+            //       // 浮点计算坐标后四舍五入
+            //       const int x = static_cast<int>(
+            //           detections[0].bbox[0] + step_x * (i + 1) + 0.5f
+            //       );
+                  
+            //       // 跳过越界坐标
+            //       if (x < 0 || x >= depth_w) continue;
+                  
+            //       for (int j = 0; j < GRID_Y; ++j) {
+            //           const int y = static_cast<int>(
+            //               detections[0].bbox[1] + step_y * (j + 1) + 0.5f
+            //           );
+                      
+            //           if (y < 0 || y >= depth_h) continue;
+                      
+            //           // 单次获取距离并检查有效性
+            //           if (float dist = depth_frame.get_distance(x, y); dist > 0.0f) {
+            //               distance_list.push_back(dist);
+            //           }
+            //       }
+            //   }
+
+            //   // 安全警告日志
+            //   if (distance_list.empty()) {
+            //       RCLCPP_WARN(this->get_logger(), "警告: 边界框内未获取到有效深度值！");
+            //   }
+            // if (!distance_list.empty()) {
+            //     std::sort(distance_list.begin(), distance_list.end());
+            //     size_t middle_index = distance_list.size() / 2;
+                
+            //     if (distance_list.size() % 2 == 0) {
+            //         // 偶数个元素时取中间两个的平均
+            //         depth_value = (distance_list[middle_index - 1] + distance_list[middle_index]) / 2.0f;
+            //     } else {
+            //         // 奇数个元素时取中间值
+            //         depth_value = distance_list[middle_index];
+            //     }  // 修复此处大括号缺失问题
+            //     } else {
+            //         // 无有效样本时回退到中心点深度
+            //         RCLCPP_WARN(this->get_logger(), "无有效深度样本，使用中心点");
+            //         depth_value = depth_frame.get_distance(
+            //             static_cast<int>(std::round(x)), 
+            //             static_cast<int>(std::round(y))
+            //         );
+            //     }
+              pixel[0] = x;
+              pixel[1] = y;
               rs2_deproject_pixel_to_point(point, &color_intrin, pixel, depth_value);
             } else {
               RCLCPP_INFO(this->get_logger(), "无目标，跳过3D计算");
@@ -321,17 +315,9 @@ private:
         } catch (const std::exception& e) {
             RCLCPP_ERROR(this->get_logger(), "目标检测失败: %s", e.what());
         }
-      
-
-        // 显示检测结果
-        // if (enable_imshow_ && !detections.empty()) {
-        //     cv::Mat output_image = draw_detections(color_image, detections);
-        //     cv::imshow("RealSense Detection", output_image);
-        //     cv::waitKey(1);
-        // }
         
         // 发布自定义消息
-        publish_msg_data(detections, dist_to_center, point,pixel);
+        // publish_msg_data(detections, dist_to_center, point,pixel);
     }
     
     RCLCPP_INFO(this->get_logger(), " 深度相机线程退出");
@@ -369,11 +355,7 @@ private:
   rclcpp::Publisher<interfaces::msg::Tensorrt>::SharedPtr msg_data_publisher_;
   std::thread depth_thread_;
   
-  rs2::pipeline p;
-  rs2::config cfg;
-  rs2::pipeline_profile profile;
-  rs2_intrinsics color_intrin;
-  rs2_intrinsics depth_intrin;
+
   // 参数
   bool enable_imshow_;
   std::string yolo_engine_path_;
