@@ -219,8 +219,8 @@ void deserialize_engine(std::string& engine_name, IRuntime** runtime, ICudaEngin
 //   cudaSetDevice(kGpuId);
 
 //   // 参数变量初始化
-//   std::string wts_name = "/home/epoch_2/volleyball/src/tensorrtx_ros2/src/tensorrt_ros/src/weight/best.wts";        // 权重文件路径
-//   std::string engine_name = "/home/epoch_2/volleyball/src/tensorrtx_ros2/src/tensorrt_ros/src/weight/best.engine";     // 引擎文件路径
+//   std::string wts_name = "/home/epoch/1/volleyball/tensorrtx_ros2/src/tensorrt_ros/src/weight/yolov5s.wts";        // 权重文件路径
+//   std::string engine_name = "/home/epoch/1/volleyball/tensorrtx_ros2/src/tensorrt_ros/src/weight/yolov5s_volleyball.engine";     // 引擎文件路径
 //   bool is_p6 = false;               // 是否P6模型
 //   float gd = 0.33f, gw = 0.50f;       // 模型缩放因子
 //   std::string img_dir;              // 图像目录路径
