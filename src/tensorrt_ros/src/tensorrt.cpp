@@ -145,10 +145,10 @@ private:
     batch_nms(res_batch, cpu_output_buffer, img_batch.size(), kOutputSize, kConfThresh, kNmsThresh);
 
     // 在图像上绘制检测框
-    draw_bbox(img_batch, res_batch);
+    // draw_bbox(img_batch, res_batch);
     
-    cv::imshow("Detection Result", img_batch[0]);
-    cv::waitKey(1);
+    // cv::imshow("Detection Result", img_batch[0]);
+    // cv::waitKey(1);
 
     return res_batch[0];  // 返回第一个图像的检测结果
 
@@ -158,6 +158,7 @@ private:
   // 相机主循环
   void run_camera() 
   {
+    auto start = std::chrono::system_clock::now();
     RCLCPP_INFO(this->get_logger(), "启动深度相机...");
     rs2::pipeline p;
     rs2::config cfg;
@@ -168,7 +169,7 @@ private:
 
     // 启动管道rs2::pipeline p
     rs2::pipeline_profile profile = p.start(cfg);
-    rs2::align align_to_color(RS2_STREAM_COLOR);  // 关键：定义对齐到彩色流
+    // rs2::align align_to_color(RS2_STREAM_COLOR);  // 关键：定义对齐到彩色流
     // 获取相机内参（用于3D坐标计算）
     auto color_stream = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
     rs2_intrinsics color_intrin = color_stream.get_intrinsics();
@@ -180,23 +181,38 @@ private:
     RCLCPP_INFO(this->get_logger(), "深度相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
                 depth_intrin.fx, depth_intrin.fy, depth_intrin.ppx, depth_intrin.ppy);
     
-
+    auto end = std::chrono::system_clock::now();
+    std::cout << "相机初始化时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "毫秒" << std::endl;
     // 主循环
     while (rclcpp::ok())
-    {
-        rs2::frameset frames = p.wait_for_frames();
-
-
+    {   
+        // auto start_total = std::chrono::system_clock::now();
+        // 异步获取帧
+        // auto start_wait = std::chrono::system_clock::now();
+        rs2::frameset frames;
+        // if (!p.poll_for_frames(&frames)) {  // 非阻塞检查
+        //     continue;  // 跳过本次循环
+        // }
+        frames = p.wait_for_frames();  // 设置超时时间(ms
+        // auto end_wait = std::chrono::system_clock::now();
+        // std::cout << "等待帧时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_wait - start1).count() << "毫秒" << std::endl;
         // 执行像素对齐（深度图→彩色图）
-        auto aligned_frames = align_to_color.process(frames);
 
+
+        // auto start_align = std::chrono::system_clock::now();
+        // auto aligned_frames = align_to_color.process(frames);
         // 从对齐后的帧集合中获取配准后的深度帧和彩色帧
-        rs2::depth_frame depth_frame = aligned_frames.get_depth_frame();
-        rs2::video_frame color_frame = aligned_frames.get_color_frame();
-
+        // rs2::depth_frame depth_frame = aligned_frames.get_depth_frame();
+        rs2::depth_frame depth_frame = frames.get_depth_frame();
+        // rs2::video_frame color_frame = aligned_frames.get_color_frame();
+        rs2::video_frame color_frame = frames.get_color_frame();
+        // auto end_align = std::chrono::system_clock::now();
+        // std::cout << "对齐时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_align - start2).count() << "毫秒" << std::endl;
+        
+        // auto start3 = std::chrono::system_clock::now();
         float dist_to_center = depth_frame.get_distance(depth_frame.get_width() / 2, 
                                                       depth_frame.get_height() / 2);
-        RCLCPP_INFO(this->get_logger(), "中心深度: %.2f米", dist_to_center);
+        // RCLCPP_INFO(this->get_logger(), "中心深度: %.2f米", dist_to_center);
         
         // 转换为OpenCV格式
         cv::Mat color_image(cv::Size(640, 480), CV_8UC3, 
@@ -210,9 +226,18 @@ private:
         // 将像素坐标投影到3D坐标
         float point[3]={0.0, 0.0, 0.0};
         std::vector<Detection> detections;
-        try {
+        // RCLCPP_INFO(this->get_logger(), "帧等待耗时: %ld ms", 
+        //     std::chrono::duration_cast<std::chrono::milliseconds>(end_wait - start_wait).count());
             
+        // RCLCPP_INFO(this->get_logger(), "帧对齐耗时: %ld ms", 
+        //     std::chrono::duration_cast<std::chrono::milliseconds>(end_align - start_align).count());
+        // auto end3 = std::chrono::system_clock::now();
+        // std::cout << "获取帧时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end3 - start3).count() << "毫秒" << std::endl;
+        try {
+            // auto start4 = std::chrono::system_clock::now();
             detections = detect(color_image);
+            // auto end4 = std::chrono::system_clock::now();
+            // std::cout << "检测时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end4 - start4).count() << "毫秒" << std::endl;
             RCLCPP_INFO(this->get_logger(), "检测到 %zu 个目标", detections.size());
             // // 计算3D坐标
             //     // 边界框中心
@@ -297,7 +322,7 @@ private:
             //     }
               pixel[0] = x;
               pixel[1] = y;
-              rs2_deproject_pixel_to_point(point, &color_intrin, pixel, depth_value);
+              rs2_deproject_pixel_to_point(point, &depth_intrin, pixel, depth_value);
             } else {
               RCLCPP_INFO(this->get_logger(), "无目标，跳过3D计算");
             }
