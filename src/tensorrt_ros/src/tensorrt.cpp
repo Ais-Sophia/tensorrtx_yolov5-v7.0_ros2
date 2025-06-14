@@ -246,80 +246,80 @@ private:
               x = (detections[0].bbox[0] + detections[0].bbox[2]) / 2;
               y = (detections[0].bbox[1] + detections[0].bbox[3]) / 2;
               // ... [使用x,y]
-              depth_value = depth_frame.get_distance(
+              // depth_value = depth_frame.get_distance(
+              //           static_cast<int>(std::round(x)), 
+              //           static_cast<int>(std::round(y))
+              //       );
+              std::vector<float> distance_list;
+
+              // 参数配置
+              const int GRID_X = 5; // X方向采样点数
+              const int GRID_Y = 5; // Y方向采样点数
+
+              // 获取深度图尺寸（必须确保depth_frame支持这些方法）
+              const int depth_w = depth_frame.get_width();
+              const int depth_h = depth_frame.get_height();
+
+              // 预分配内存避免反复扩容
+              distance_list.reserve(GRID_X * GRID_Y);
+
+              // 计算采样步长（使用浮点避免整数截断）
+              float step_x = detections[0].bbox[2] / (GRID_X + 1.0f);
+              float step_y = detections[0].bbox[3] / (GRID_Y + 1.0f);
+
+              // 输出改进：显示实际采样位置
+              RCLCPP_INFO(this->get_logger(), "采样起始点: (%.1f, %.1f), 步长: (%.1f, %.1f)",
+                          detections[0].bbox[0] + step_x,
+                          detections[0].bbox[1] + step_y,
+                          step_x, step_y);
+
+              // 优化后的采样循环
+              for (int i = 0; i < GRID_X; ++i) {
+                  // 浮点计算坐标后四舍五入
+                  const int x = static_cast<int>(
+                      detections[0].bbox[0] + step_x * (i + 1) + 0.5f
+                  );
+                  
+                  // 跳过越界坐标
+                  if (x < 0 || x >= depth_w) continue;
+                  
+                  for (int j = 0; j < GRID_Y; ++j) {
+                      const int y = static_cast<int>(
+                          detections[0].bbox[1] + step_y * (j + 1) + 0.5f
+                      );
+                      
+                      if (y < 0 || y >= depth_h) continue;
+                      
+                      // 单次获取距离并检查有效性
+                      if (float dist = depth_frame.get_distance(x, y); dist > 0.0f) {
+                          distance_list.push_back(dist);
+                      }
+                  }
+              }
+
+              // 安全警告日志
+              if (distance_list.empty()) {
+                  RCLCPP_WARN(this->get_logger(), "警告: 边界框内未获取到有效深度值！");
+              }
+            if (!distance_list.empty()) {
+                std::sort(distance_list.begin(), distance_list.end());
+                size_t middle_index = distance_list.size() / 2;
+                
+                if (distance_list.size() % 2 == 0) {
+                    // 偶数个元素时取中间两个的平均
+                    depth_value = (distance_list[middle_index - 1] + distance_list[middle_index]) / 2.0f;
+                } else {
+                    // 奇数个元素时取中间值
+                    depth_value = distance_list[middle_index];
+                }  // 修复此处大括号缺失问题
+                } else {
+                    // 无有效样本时回退到中心点深度
+                    RCLCPP_WARN(this->get_logger(), "无有效深度样本，使用中心点");
+                    depth_value = depth_frame.get_distance(
                         static_cast<int>(std::round(x)), 
                         static_cast<int>(std::round(y))
                     );
-            //   std::vector<float> distance_list;
-
-            //   // 参数配置
-            //   const int GRID_X = 5; // X方向采样点数
-            //   const int GRID_Y = 5; // Y方向采样点数
-
-            //   // 获取深度图尺寸（必须确保depth_frame支持这些方法）
-            //   const int depth_w = depth_frame.get_width();
-            //   const int depth_h = depth_frame.get_height();
-
-            //   // 预分配内存避免反复扩容
-            //   distance_list.reserve(GRID_X * GRID_Y);
-
-            //   // 计算采样步长（使用浮点避免整数截断）
-            //   float step_x = detections[0].bbox[2] / (GRID_X + 1.0f);
-            //   float step_y = detections[0].bbox[3] / (GRID_Y + 1.0f);
-
-            //   // 输出改进：显示实际采样位置
-            //   RCLCPP_INFO(this->get_logger(), "采样起始点: (%.1f, %.1f), 步长: (%.1f, %.1f)",
-            //               detections[0].bbox[0] + step_x,
-            //               detections[0].bbox[1] + step_y,
-            //               step_x, step_y);
-
-            //   // 优化后的采样循环
-            //   for (int i = 0; i < GRID_X; ++i) {
-            //       // 浮点计算坐标后四舍五入
-            //       const int x = static_cast<int>(
-            //           detections[0].bbox[0] + step_x * (i + 1) + 0.5f
-            //       );
-                  
-            //       // 跳过越界坐标
-            //       if (x < 0 || x >= depth_w) continue;
-                  
-            //       for (int j = 0; j < GRID_Y; ++j) {
-            //           const int y = static_cast<int>(
-            //               detections[0].bbox[1] + step_y * (j + 1) + 0.5f
-            //           );
-                      
-            //           if (y < 0 || y >= depth_h) continue;
-                      
-            //           // 单次获取距离并检查有效性
-            //           if (float dist = depth_frame.get_distance(x, y); dist > 0.0f) {
-            //               distance_list.push_back(dist);
-            //           }
-            //       }
-            //   }
-
-            //   // 安全警告日志
-            //   if (distance_list.empty()) {
-            //       RCLCPP_WARN(this->get_logger(), "警告: 边界框内未获取到有效深度值！");
-            //   }
-            // if (!distance_list.empty()) {
-            //     std::sort(distance_list.begin(), distance_list.end());
-            //     size_t middle_index = distance_list.size() / 2;
-                
-            //     if (distance_list.size() % 2 == 0) {
-            //         // 偶数个元素时取中间两个的平均
-            //         depth_value = (distance_list[middle_index - 1] + distance_list[middle_index]) / 2.0f;
-            //     } else {
-            //         // 奇数个元素时取中间值
-            //         depth_value = distance_list[middle_index];
-            //     }  // 修复此处大括号缺失问题
-            //     } else {
-            //         // 无有效样本时回退到中心点深度
-            //         RCLCPP_WARN(this->get_logger(), "无有效深度样本，使用中心点");
-            //         depth_value = depth_frame.get_distance(
-            //             static_cast<int>(std::round(x)), 
-            //             static_cast<int>(std::round(y))
-            //         );
-            //     }
+                }
               pixel[0] = x;
               pixel[1] = y;
               rs2_deproject_pixel_to_point(point, &depth_intrin, pixel, depth_value);
@@ -342,7 +342,7 @@ private:
         }
         
         // 发布自定义消息
-        // publish_msg_data(detections, dist_to_center, point,pixel);
+        publish_msg_data(detections, dist_to_center, point,pixel);
     }
     
     RCLCPP_INFO(this->get_logger(), " 深度相机线程退出");
