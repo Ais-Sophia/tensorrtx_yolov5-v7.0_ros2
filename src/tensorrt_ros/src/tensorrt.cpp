@@ -87,6 +87,114 @@ public:
   }
   
 private:
+  // 获取相机外参（深度到彩色）
+  std::pair<cv::Mat, cv::Mat> get_depth_to_color_extrinsics(rs2::pipeline& pipe) {
+      auto frames = pipe.wait_for_frames();
+      auto depth_frame = frames.get_depth_frame();
+      auto color_frame = frames.get_color_frame();
+      
+      auto depth_profile = depth_frame.get_profile().as<rs2::video_stream_profile>();
+      auto color_profile = color_frame.get_profile().as<rs2::video_stream_profile>();
+      
+      rs2_extrinsics extrinsics = depth_profile.get_extrinsics_to(color_profile);
+      
+      // 转换为OpenCV矩阵
+      cv::Mat R = (cv::Mat_<float>(3, 3) << 
+          extrinsics.rotation[0], extrinsics.rotation[1], extrinsics.rotation[2],
+          extrinsics.rotation[3], extrinsics.rotation[4], extrinsics.rotation[5],
+          extrinsics.rotation[6], extrinsics.rotation[7], extrinsics.rotation[8]);
+      
+      cv::Mat t = (cv::Mat_<float>(3, 1) << 
+          extrinsics.translation[0], 
+          extrinsics.translation[1], 
+          extrinsics.translation[2]);
+      
+      return {R, t};
+  }
+  // 彩色像素坐标转深度点云坐标
+  cv::Point3f color_pixel_to_depth_point(
+      int u_color, int v_color, 
+      const rs2::depth_frame& depth_frame,
+      const cv::Mat& camera_matrix_color,
+      const cv::Mat& camera_matrix_depth,
+      const cv::Mat& R, const cv::Mat& t) 
+  {
+      // 提取内参参数
+      float fx_color = camera_matrix_color.at<float>(0, 0);
+      float fy_color = camera_matrix_color.at<float>(1, 1);
+      float cx_color = camera_matrix_color.at<float>(0, 2);
+      float cy_color = camera_matrix_color.at<float>(1, 2);
+      
+      float fx_depth = camera_matrix_depth.at<float>(0, 0);
+      float fy_depth = camera_matrix_depth.at<float>(1, 1);
+      float cx_depth = camera_matrix_depth.at<float>(0, 2);
+      float cy_depth = camera_matrix_depth.at<float>(1, 2);
+      
+      // 步骤1：获取初始深度值（取深度图中心点）
+      int center_u = depth_frame.get_width() / 2;
+      int center_v = depth_frame.get_height() / 2;
+      float z0 = depth_frame.get_distance(center_u, center_v);
+      if (z0 <= 0) z0 = 1.0f; // 无效深度时使用默认值
+      
+      // 步骤2：彩色像素坐标转彩色相机坐标系
+      float Xc = (u_color - cx_color) * z0 / fx_color;
+      float Yc = (v_color - cy_color) * z0 / fy_color;
+      float Zc = z0;
+      
+      // 步骤3：坐标转换到深度相机坐标系
+      cv::Mat Pc = (cv::Mat_<float>(3, 1) << Xc, Yc, Zc);
+      cv::Mat R_inv = R.t();  // 旋转矩阵正交，转置=逆
+      cv::Mat Pd = R_inv * (Pc - t);
+      
+      // 步骤4：投影到深度图像素坐标
+      float Xd = Pd.at<float>(0);
+      float Yd = Pd.at<float>(1);
+      float Zd = Pd.at<float>(2);
+      int u_depth = static_cast<int>(fx_depth * (Xd / Zd) + cx_depth);
+      int v_depth = static_cast<int>(fy_depth * (Yd / Zd) + cy_depth);
+      
+      // 步骤5：获取精确深度值
+      float d_final = depth_frame.get_distance(u_depth, v_depth);
+      
+      // 无效深度处理策略
+      const float MAX_DEPTH = 10.0f; // 最大有效深度(米)
+      if (d_final <= 0 || d_final > MAX_DEPTH) {
+          // 策略1：使用估计的深度值
+          // return cv::Point3f(Xd, Yd, Zd);
+          
+          // 策略2：取周围区域的深度中值
+          const int KERNEL_SIZE = 5;
+          std::vector<float> depths;
+          
+          for (int du = -KERNEL_SIZE/2; du <= KERNEL_SIZE/2; du++) {
+              for (int dv = -KERNEL_SIZE/2; dv <= KERNEL_SIZE/2; dv++) {
+                  int x = u_depth + du;
+                  int y = v_depth + dv;
+                  if (x >= 0 && x < depth_frame.get_width() && 
+                      y >= 0 && y < depth_frame.get_height()) {
+                      float d = depth_frame.get_distance(x, y);
+                      if (d > 0 && d <= MAX_DEPTH) {
+                          depths.push_back(d);
+                      }
+                  }
+              }
+          }
+          
+          if (!depths.empty()) {
+              std::sort(depths.begin(), depths.end());
+              d_final = depths[depths.size() / 2]; // 中值
+          } else {
+              return cv::Point3f(0, 0, 0); // 返回无效点
+          }
+      }
+      
+      // 步骤6：计算最终深度坐标
+      float Xf = (u_depth - cx_depth) * d_final / fx_depth;
+      float Yf = (v_depth - cy_depth) * d_final / fy_depth;
+      float Zf = d_final;
+      
+      return cv::Point3f(Xf, Yf, Zf);
+  }
 
   // 初始化TensorRT
   void initialize_trt( IRuntime** runtime, ICudaEngine** engine,
@@ -114,7 +222,7 @@ private:
     enable_imshow_ = this->get_parameter("imshow").as_bool();
     this->declare_parameter("yolo_engine_path", "weight/yolov5s.engine");
     yolo_engine_path_ = this->get_parameter("yolo_engine_path").as_string();
-    yolo_engine_path_ = "/home/epoch/1/volleyball/tensorrtx_ros2/src/tensorrt_ros/src/weight/best.engine";
+    yolo_engine_path_ = "/home/epoch/tensorrtx_ros2/src/tensorrt_ros/src/weight/volleyball.engine";
     if (yolo_engine_path_.empty()) {
         yolo_engine_path_ = "/home/epoch/Desktop/1/R1_vision_v2/src/tensorrt_ros/src/weight/yolov5s.engine";
     }
@@ -145,10 +253,10 @@ private:
     batch_nms(res_batch, cpu_output_buffer, img_batch.size(), kOutputSize, kConfThresh, kNmsThresh);
 
     // 在图像上绘制检测框
-    // draw_bbox(img_batch, res_batch);
+    draw_bbox(img_batch, res_batch);
     
-    // cv::imshow("Detection Result", img_batch[0]);
-    // cv::waitKey(1);
+    cv::imshow("Detection Result", img_batch[0]);
+    cv::waitKey(1);
 
     return res_batch[0];  // 返回第一个图像的检测结果
 
@@ -163,81 +271,46 @@ private:
     rs2::pipeline p;
     rs2::config cfg;
     // 创建RealSense管道和配置
-
     cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
     cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
-
-    // 启动管道rs2::pipeline p
     rs2::pipeline_profile profile = p.start(cfg);
-    // rs2::align align_to_color(RS2_STREAM_COLOR);  // 关键：定义对齐到彩色流
-    // 获取相机内参（用于3D坐标计算）
-    auto color_stream = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
-    rs2_intrinsics color_intrin = color_stream.get_intrinsics();
-    RCLCPP_INFO(this->get_logger(), "彩色相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
-                color_intrin.fx, color_intrin.fy, color_intrin.ppx, color_intrin.ppy);
-
-    auto depth_stream = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
-    rs2_intrinsics depth_intrin = depth_stream.get_intrinsics();
-    RCLCPP_INFO(this->get_logger(), "深度相机内参: fx=%.2f, fy=%.2f, ppx=%.2f, ppy=%.2f",
-                depth_intrin.fx, depth_intrin.fy, depth_intrin.ppx, depth_intrin.ppy);
-    
     auto end = std::chrono::system_clock::now();
     std::cout << "相机初始化时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "毫秒" << std::endl;
     // 主循环
     while (rclcpp::ok())
     {   
-        // auto start_total = std::chrono::system_clock::now();
-        // 异步获取帧
-        // auto start_wait = std::chrono::system_clock::now();
         rs2::frameset frames;
-        // if (!p.poll_for_frames(&frames)) {  // 非阻塞检查
-        //     continue;  // 跳过本次循环
-        // }
         frames = p.wait_for_frames();  // 设置超时时间(ms
-        // auto end_wait = std::chrono::system_clock::now();
-        // std::cout << "等待帧时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_wait - start1).count() << "毫秒" << std::endl;
-        // 执行像素对齐（深度图→彩色图）
-
-
-        // auto start_align = std::chrono::system_clock::now();
-        // auto aligned_frames = align_to_color.process(frames);
-        // 从对齐后的帧集合中获取配准后的深度帧和彩色帧
-        // rs2::depth_frame depth_frame = aligned_frames.get_depth_frame();
         rs2::depth_frame depth_frame = frames.get_depth_frame();
-        // rs2::video_frame color_frame = aligned_frames.get_color_frame();
         rs2::video_frame color_frame = frames.get_color_frame();
-        // auto end_align = std::chrono::system_clock::now();
-        // std::cout << "对齐时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_align - start2).count() << "毫秒" << std::endl;
-        
-        // auto start3 = std::chrono::system_clock::now();
+        // 获取内外参数
+        auto [R, t] = get_depth_to_color_extrinsics(p);
+        auto color_profile = color_frame.get_profile().as<rs2::video_stream_profile>();
+        auto color_intrin = color_profile.get_intrinsics();
+        cv::Mat camera_matrix_color = (cv::Mat_<float>(3, 3) << 
+            color_intrin.fx, 0, color_intrin.ppx,
+            0, color_intrin.fy, color_intrin.ppy,
+            0, 0, 1);
+        auto depth_profile = depth_frame.get_profile().as<rs2::video_stream_profile>();
+        auto depth_intrin = depth_profile.get_intrinsics();
+        cv::Mat camera_matrix_depth = (cv::Mat_<float>(3, 3) << 
+            depth_intrin.fx, 0, depth_intrin.ppx,
+            0, depth_intrin.fy, depth_intrin.ppy,
+            0, 0, 1);
         float dist_to_center = depth_frame.get_distance(depth_frame.get_width() / 2, 
                                                       depth_frame.get_height() / 2);
-        // RCLCPP_INFO(this->get_logger(), "中心深度: %.2f米", dist_to_center);
-        
-        // 转换为OpenCV格式
         cv::Mat color_image(cv::Size(640, 480), CV_8UC3, 
                            (void*)color_frame.get_data(), cv::Mat::AUTO_STEP);
-        // cv::cvtColor(color_image, color_image, cv::COLOR_BGR2RGB);
         // 执行目标检测
         float x=0.0,y=0.0;
         float depth_value = 0.0 ;
         float pixel[2] = {0.0, 0.0};
-        // int step_x=0,step_y=0;
         // 将像素坐标投影到3D坐标
         float point[3]={0.0, 0.0, 0.0};
+        cv::Point3f point3d(0.0, 0.0, 0.0);
         std::vector<Detection> detections;
-        // RCLCPP_INFO(this->get_logger(), "帧等待耗时: %ld ms", 
-        //     std::chrono::duration_cast<std::chrono::milliseconds>(end_wait - start_wait).count());
-            
-        // RCLCPP_INFO(this->get_logger(), "帧对齐耗时: %ld ms", 
-        //     std::chrono::duration_cast<std::chrono::milliseconds>(end_align - start_align).count());
-        // auto end3 = std::chrono::system_clock::now();
-        // std::cout << "获取帧时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end3 - start3).count() << "毫秒" << std::endl;
         try {
-            // auto start4 = std::chrono::system_clock::now();
             detections = detect(color_image);
-            // auto end4 = std::chrono::system_clock::now();
-            // std::cout << "检测时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end4 - start4).count() << "毫秒" << std::endl;
             RCLCPP_INFO(this->get_logger(), "检测到 %zu 个目标", detections.size());
             // // 计算3D坐标
             //     // 边界框中心
@@ -246,115 +319,35 @@ private:
               x = (detections[0].bbox[0] + detections[0].bbox[2]) / 2;
               y = (detections[0].bbox[1] + detections[0].bbox[3]) / 2;
               // ... [使用x,y]
-              // depth_value = depth_frame.get_distance(
-              //           static_cast<int>(std::round(x)), 
-              //           static_cast<int>(std::round(y))
-              //       );
-              std::vector<float> distance_list;
-
-              // 参数配置
-              const int GRID_X = 5; // X方向采样点数
-              const int GRID_Y = 5; // Y方向采样点数
-
-              // 获取深度图尺寸（必须确保depth_frame支持这些方法）
-              const int depth_w = depth_frame.get_width();
-              const int depth_h = depth_frame.get_height();
-
-              // 预分配内存避免反复扩容
-              distance_list.reserve(GRID_X * GRID_Y);
-
-              // 计算采样步长（使用浮点避免整数截断）
-              float step_x = detections[0].bbox[2] / (GRID_X + 1.0f);
-              float step_y = detections[0].bbox[3] / (GRID_Y + 1.0f);
-
-              // 输出改进：显示实际采样位置
-              RCLCPP_INFO(this->get_logger(), "采样起始点: (%.1f, %.1f), 步长: (%.1f, %.1f)",
-                          detections[0].bbox[0] + step_x,
-                          detections[0].bbox[1] + step_y,
-                          step_x, step_y);
-
-              // 优化后的采样循环
-              for (int i = 0; i < GRID_X; ++i) {
-                  // 浮点计算坐标后四舍五入
-                  const int x = static_cast<int>(
-                      detections[0].bbox[0] + step_x * (i + 1) + 0.5f
-                  );
-                  
-                  // 跳过越界坐标
-                  if (x < 0 || x >= depth_w) continue;
-                  
-                  for (int j = 0; j < GRID_Y; ++j) {
-                      const int y = static_cast<int>(
-                          detections[0].bbox[1] + step_y * (j + 1) + 0.5f
-                      );
-                      
-                      if (y < 0 || y >= depth_h) continue;
-                      
-                      // 单次获取距离并检查有效性
-                      if (float dist = depth_frame.get_distance(x, y); dist > 0.0f) {
-                          distance_list.push_back(dist);
-                      }
-                  }
-              }
-
-              // 安全警告日志
-              if (distance_list.empty()) {
-                  RCLCPP_WARN(this->get_logger(), "警告: 边界框内未获取到有效深度值！");
-              }
-            if (!distance_list.empty()) {
-                std::sort(distance_list.begin(), distance_list.end());
-                size_t middle_index = distance_list.size() / 2;
-                
-                if (distance_list.size() % 2 == 0) {
-                    // 偶数个元素时取中间两个的平均
-                    depth_value = (distance_list[middle_index - 1] + distance_list[middle_index]) / 2.0f;
-                } else {
-                    // 奇数个元素时取中间值
-                    depth_value = distance_list[middle_index];
-                }  // 修复此处大括号缺失问题
-                } else {
-                    // 无有效样本时回退到中心点深度
-                    RCLCPP_WARN(this->get_logger(), "无有效深度样本，使用中心点");
-                    depth_value = depth_frame.get_distance(
+              depth_value = depth_frame.get_distance(
                         static_cast<int>(std::round(x)), 
                         static_cast<int>(std::round(y))
                     );
-                }
-              pixel[0] = x;
-              pixel[1] = y;
-              rs2_deproject_pixel_to_point(point, &depth_intrin, pixel, depth_value);
+              point3d = color_pixel_to_depth_point(
+                  (int)x, (int)y, depth_frame,
+                  camera_matrix_color, camera_matrix_depth,
+                  R, t
+              );
+              // pixel[0] = x;
+              // pixel[1] = y;
+              // rs2_deproject_pixel_to_point(point, &depth_intrin, pixel, depth_value);
             } else {
               RCLCPP_INFO(this->get_logger(), "无目标，跳过3D计算");
             }
-            //     // 获取深度值
-            //     float depth = depth_frame.get_distance(center_x, center_y);
-                
-            //     // 转换到3D坐标
-            //     float pixel[2] = {center_x, center_y};
-            //     float point[3];
-            //     rs2_deproject_pixel_to_point(point, &color_intrin, pixel, depth);
-                
-            //     RCLCPP_INFO(this->get_logger(), 
-            //                 "目标 %d @ (%.2f, %.2f, %.2f) | 置信度: %.2f", 
-            //                 det.class_id, point[0], point[1], point[2], det.conf);
         } catch (const std::exception& e) {
             RCLCPP_ERROR(this->get_logger(), "目标检测失败: %s", e.what());
         }
-        
         // 发布自定义消息
-        publish_msg_data(detections, dist_to_center, point,pixel);
+        publish_msg_data(detections, dist_to_center, &point3d);
     }
     
     RCLCPP_INFO(this->get_logger(), " 深度相机线程退出");
   }
-
-
   // 发布自定义消息
   void publish_msg_data(
                       const std::vector<Detection>& detections,
                       float center_depth,
-                      float* point,
-                    float* pixel) 
+                      cv::Point3f* point) 
   {
     auto msg = interfaces::msg::Tensorrt();
     msg.header.stamp = this->now();
@@ -369,9 +362,9 @@ private:
         msg.class_id=det.class_id;
         msg.confidence=det.conf;
     }
-    msg.point[0] = point[0];
-    msg.point[1] = point[1];
-    msg.point[2] = point[2];
+    msg.point[0] = point->x;//右
+    msg.point[1] = point->y;//下
+    msg.point[2] = point->z;//前
     // 发布消息
     msg_data_publisher_->publish(msg);
   }
