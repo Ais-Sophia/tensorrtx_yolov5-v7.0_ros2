@@ -274,9 +274,23 @@ private:
     cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
     cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
     rs2::pipeline_profile profile = p.start(cfg);
+    auto [R, t] = get_depth_to_color_extrinsics(p);
+    auto color_stream = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
+    auto depth_stream = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
+    auto color_intrin = color_stream.get_intrinsics();
+    auto depth_intrin = depth_stream.get_intrinsics();
+    cv::Mat camera_matrix_color = (cv::Mat_<float>(3, 3) << 
+        color_intrin.fx, 0, color_intrin.ppx,
+        0, color_intrin.fy, color_intrin.ppy,
+        0, 0, 1);
+    cv::Mat camera_matrix_depth = (cv::Mat_<float>(3, 3) << 
+        depth_intrin.fx, 0, depth_intrin.ppx,
+        0, depth_intrin.fy, depth_intrin.ppy,
+        0, 0, 1);
     auto end = std::chrono::system_clock::now();
     std::cout << "相机初始化时间: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "毫秒" << std::endl;
     // 主循环
+
     while (rclcpp::ok())
     {   
         rs2::frameset frames;
@@ -284,19 +298,7 @@ private:
         rs2::depth_frame depth_frame = frames.get_depth_frame();
         rs2::video_frame color_frame = frames.get_color_frame();
         // 获取内外参数
-        auto [R, t] = get_depth_to_color_extrinsics(p);
-        auto color_profile = color_frame.get_profile().as<rs2::video_stream_profile>();
-        auto color_intrin = color_profile.get_intrinsics();
-        cv::Mat camera_matrix_color = (cv::Mat_<float>(3, 3) << 
-            color_intrin.fx, 0, color_intrin.ppx,
-            0, color_intrin.fy, color_intrin.ppy,
-            0, 0, 1);
-        auto depth_profile = depth_frame.get_profile().as<rs2::video_stream_profile>();
-        auto depth_intrin = depth_profile.get_intrinsics();
-        cv::Mat camera_matrix_depth = (cv::Mat_<float>(3, 3) << 
-            depth_intrin.fx, 0, depth_intrin.ppx,
-            0, depth_intrin.fy, depth_intrin.ppy,
-            0, 0, 1);
+
         float dist_to_center = depth_frame.get_distance(depth_frame.get_width() / 2, 
                                                       depth_frame.get_height() / 2);
         cv::Mat color_image(cv::Size(640, 480), CV_8UC3, 
